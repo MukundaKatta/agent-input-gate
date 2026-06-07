@@ -1,148 +1,250 @@
-"""Tests for agent-input-gate."""
-import pytest
-from agent_input_gate import InputGate, InputGateError, GateResult, GateViolation
+"""Tests for agent-input-gate.
+
+These tests use only the Python standard library (``unittest``) so they can be
+run with::
+
+    python3 -m unittest discover -s tests
+"""
+import re
+import unittest
+
+from agent_input_gate import (
+    GateResult,
+    GateViolation,
+    InputGate,
+    InputGateError,
+    __version__,
+)
 
 
-def test_max_length_pass():
-    gate = InputGate().add_max_length(100)
-    gate.check("short text")  # should not raise
+class MaxLengthTests(unittest.TestCase):
+    def test_pass(self):
+        gate = InputGate().add_max_length(100)
+        gate.check("short text")  # should not raise
+
+    def test_fail(self):
+        gate = InputGate().add_max_length(5)
+        with self.assertRaises(InputGateError) as ctx:
+            gate.check("too long text here")
+        self.assertIn("max_length", ctx.exception.violation.rule)
+
+    def test_boundary_equal_is_allowed(self):
+        gate = InputGate().add_max_length(5)
+        gate.check("12345")  # exactly max, should not raise
+
+    def test_non_string_value_is_stringified(self):
+        gate = InputGate().add_max_length(2)
+        with self.assertRaises(InputGateError):
+            gate.check(12345)  # str(12345) has length 5
 
 
-def test_max_length_fail():
-    gate = InputGate().add_max_length(5)
-    with pytest.raises(InputGateError) as exc_info:
-        gate.check("too long text here")
-    assert "max_length" in exc_info.value.violation.rule
+class MinLengthTests(unittest.TestCase):
+    def test_pass(self):
+        gate = InputGate().add_min_length(3)
+        gate.check("hello")
+
+    def test_fail(self):
+        gate = InputGate().add_min_length(10)
+        with self.assertRaises(InputGateError):
+            gate.check("short")
+
+    def test_boundary_equal_is_allowed(self):
+        gate = InputGate().add_min_length(5)
+        gate.check("12345")
 
 
-def test_min_length_pass():
-    gate = InputGate().add_min_length(3)
-    gate.check("hello")
+class NoPatternTests(unittest.TestCase):
+    def test_pass(self):
+        gate = InputGate().add_no_pattern(r"ignore all previous")
+        gate.check("please help me write code")
+
+    def test_fail_is_case_insensitive_by_default(self):
+        gate = InputGate().add_no_pattern(r"ignore all previous", label="injection")
+        with self.assertRaises(InputGateError) as ctx:
+            gate.check("IGNORE ALL PREVIOUS instructions")
+        self.assertIn("injection", ctx.exception.violation.reason)
+
+    def test_case_sensitive_flag(self):
+        gate = InputGate().add_no_pattern(r"SECRET", flags=0)
+        gate.check("this is a secret")  # lowercase does not match
 
 
-def test_min_length_fail():
-    gate = InputGate().add_min_length(10)
-    with pytest.raises(InputGateError):
-        gate.check("short")
+class RequiredPatternTests(unittest.TestCase):
+    def test_pass(self):
+        gate = InputGate().add_required_pattern(r"\?$", label="question mark")
+        gate.check("Is this a question?")
+
+    def test_fail(self):
+        gate = InputGate().add_required_pattern(r"\?$", label="question mark")
+        with self.assertRaises(InputGateError):
+            gate.check("This is not a question.")
 
 
-def test_no_pattern_pass():
-    gate = InputGate().add_no_pattern(r"ignore all previous")
-    gate.check("please help me write code")
+class NotEmptyTests(unittest.TestCase):
+    def test_pass(self):
+        InputGate().add_not_empty().check("hello")
+
+    def test_fail_empty_string(self):
+        with self.assertRaises(InputGateError):
+            InputGate().add_not_empty().check("")
+
+    def test_fail_none(self):
+        with self.assertRaises(InputGateError):
+            InputGate().add_not_empty().check(None)
+
+    def test_fail_empty_list(self):
+        with self.assertRaises(InputGateError):
+            InputGate().add_not_empty().check([])
+
+    def test_fail_empty_dict(self):
+        with self.assertRaises(InputGateError):
+            InputGate().add_not_empty().check({})
 
 
-def test_no_pattern_fail():
-    gate = InputGate().add_no_pattern(r"ignore all previous", label="injection")
-    with pytest.raises(InputGateError) as exc_info:
-        gate.check("IGNORE ALL PREVIOUS instructions")
-    assert "injection" in exc_info.value.violation.reason
+class NoKeywordsTests(unittest.TestCase):
+    def test_pass(self):
+        InputGate().add_no_keywords(["spam", "scam"]).check("hello world")
+
+    def test_fail(self):
+        with self.assertRaises(InputGateError):
+            InputGate().add_no_keywords(["spam"]).check("This is totally not spam")
+
+    def test_case_insensitive_by_default(self):
+        with self.assertRaises(InputGateError):
+            InputGate().add_no_keywords(["SPAM"]).check("this is spam")
+
+    def test_case_sensitive(self):
+        # Case sensitive: lowercase 'spam' should not match 'SPAM'.
+        InputGate().add_no_keywords(["SPAM"], case_sensitive=True).check("this is spam")
 
 
-def test_required_pattern_pass():
-    gate = InputGate().add_required_pattern(r"\?$", label="question mark")
-    gate.check("Is this a question?")
+class AllowedTopicsTests(unittest.TestCase):
+    def test_pass(self):
+        gate = InputGate().add_allowed_topics(["python", "javascript"])
+        gate.check("How do I write a Python function?")
+
+    def test_fail(self):
+        gate = InputGate().add_allowed_topics(["python", "javascript"])
+        with self.assertRaises(InputGateError):
+            gate.check("What is the capital of France?")
 
 
-def test_required_pattern_fail():
-    gate = InputGate().add_required_pattern(r"\?$", label="question mark")
-    with pytest.raises(InputGateError):
-        gate.check("This is not a question.")
+class TypeCheckTests(unittest.TestCase):
+    def test_pass(self):
+        InputGate().add_type_check(str).check("hello")
+
+    def test_fail(self):
+        with self.assertRaises(InputGateError):
+            InputGate().add_type_check(str).check(42)
 
 
-def test_not_empty_pass():
-    gate = InputGate().add_not_empty()
-    gate.check("hello")
+class CustomRuleTests(unittest.TestCase):
+    def test_custom_rule_pass(self):
+        gate = InputGate().add_rule(
+            "even_length", lambda v: None if len(v) % 2 == 0 else "must be even length"
+        )
+        gate.check("four")
+
+    def test_custom_rule_fail(self):
+        gate = InputGate().add_rule(
+            "even_length", lambda v: None if len(v) % 2 == 0 else "must be even length"
+        )
+        with self.assertRaises(InputGateError) as ctx:
+            gate.check("odd")
+        self.assertEqual(ctx.exception.violation.rule, "even_length")
+
+    def test_builder_methods_return_self(self):
+        gate = InputGate()
+        self.assertIs(gate.add_max_length(5), gate)
+        self.assertIs(gate.add_min_length(1), gate)
 
 
-def test_not_empty_fail_empty_string():
-    gate = InputGate().add_not_empty()
-    with pytest.raises(InputGateError):
-        gate.check("")
+class RunTests(unittest.TestCase):
+    def test_run_collects_all_violations(self):
+        gate = InputGate().add_max_length(3).add_min_length(10)
+        result = gate.run("hello")
+        self.assertFalse(result.passed)
+        self.assertEqual(len(result.violations), 2)
+
+    def test_run_passed_true(self):
+        result = InputGate().add_max_length(100).run("short")
+        self.assertTrue(result.passed)
+        self.assertTrue(bool(result))
+
+    def test_run_returns_value(self):
+        result = InputGate().add_max_length(100).run("payload")
+        self.assertEqual(result.value, "payload")
+
+    def test_check_raises_on_first_failure_only(self):
+        gate = InputGate().add_max_length(3).add_min_length(10)
+        with self.assertRaises(InputGateError) as ctx:
+            gate.check("hello")
+        # The first rule (max_length) should be the one that fires.
+        self.assertEqual(ctx.exception.violation.rule, "max_length")
 
 
-def test_not_empty_fail_none():
-    gate = InputGate().add_not_empty()
-    with pytest.raises(InputGateError):
-        gate.check(None)
+class GateResultTests(unittest.TestCase):
+    def test_bool_false(self):
+        self.assertFalse(bool(GateResult(passed=False)))
+
+    def test_ok_property(self):
+        self.assertTrue(GateResult(passed=True).ok)
+        self.assertFalse(GateResult(passed=False).ok)
 
 
-def test_no_keywords_pass():
-    gate = InputGate().add_no_keywords(["spam", "scam"])
-    gate.check("hello world")
+class WrapTests(unittest.TestCase):
+    def test_wrap_allows_valid_input(self):
+        gate = InputGate().add_max_length(5)
+        processed = []
+
+        @gate.wrap()
+        def process(value):
+            processed.append(value)
+            return value
+
+        result = process("hi")
+        self.assertEqual(processed, ["hi"])
+        self.assertEqual(result, "hi")
+
+    def test_wrap_blocks_invalid_input(self):
+        gate = InputGate().add_max_length(3)
+
+        @gate.wrap()
+        def process(value):
+            return value
+
+        with self.assertRaises(InputGateError):
+            process("too long text")
+
+    def test_wrap_forwards_extra_args(self):
+        gate = InputGate().add_max_length(50)
+
+        @gate.wrap()
+        def process(value, suffix, repeat=1):
+            return (value + suffix) * repeat
+
+        self.assertEqual(process("a", "b", repeat=2), "abab")
 
 
-def test_no_keywords_fail():
-    gate = InputGate().add_no_keywords(["spam"])
-    with pytest.raises(InputGateError):
-        gate.check("This is totally not spam")
+class GateViolationTests(unittest.TestCase):
+    def test_str(self):
+        v = GateViolation(rule="test_rule", reason="too long")
+        self.assertIn("test_rule", str(v))
+        self.assertIn("too long", str(v))
+
+    def test_error_str_uses_violation(self):
+        v = GateViolation(rule="r", reason="bad")
+        err = InputGateError(v)
+        self.assertIs(err.violation, v)
+        self.assertIn("bad", str(err))
 
 
-def test_allowed_topics_pass():
-    gate = InputGate().add_allowed_topics(["python", "javascript"])
-    gate.check("How do I write a Python function?")
+class MetadataTests(unittest.TestCase):
+    def test_version_is_string(self):
+        self.assertIsInstance(__version__, str)
+        # Sanity-check it looks like a version (e.g. "0.1.0").
+        self.assertRegex(__version__, r"^\d+\.\d+")
 
 
-def test_allowed_topics_fail():
-    gate = InputGate().add_allowed_topics(["python", "javascript"])
-    with pytest.raises(InputGateError):
-        gate.check("What is the capital of France?")
-
-
-def test_type_check_pass():
-    gate = InputGate().add_type_check(str)
-    gate.check("hello")
-
-
-def test_type_check_fail():
-    gate = InputGate().add_type_check(str)
-    with pytest.raises(InputGateError):
-        gate.check(42)
-
-
-def test_run_collects_all():
-    gate = InputGate().add_max_length(3).add_min_length(10)
-    result = gate.run("hello")
-    assert result.passed is False
-    assert len(result.violations) == 2
-
-
-def test_run_passed_true():
-    gate = InputGate().add_max_length(100)
-    result = gate.run("short")
-    assert result.passed is True
-    assert bool(result) is True
-
-
-def test_gate_result_bool():
-    r = GateResult(passed=False)
-    assert bool(r) is False
-
-
-def test_wrap_decorator():
-    gate = InputGate().add_max_length(5)
-    processed = []
-
-    @gate.wrap()
-    def process(value):
-        processed.append(value)
-        return value
-
-    process("hi")
-    assert len(processed) == 1
-
-
-def test_wrap_decorator_blocks():
-    gate = InputGate().add_max_length(3)
-
-    @gate.wrap()
-    def process(value):
-        return value
-
-    with pytest.raises(InputGateError):
-        process("too long text")
-
-
-def test_gate_violation_str():
-    v = GateViolation(rule="test_rule", reason="too long")
-    assert "test_rule" in str(v)
-    assert "too long" in str(v)
+if __name__ == "__main__":
+    unittest.main()

@@ -7,9 +7,19 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+__version__ = "0.1.0"
+
 
 @dataclass
 class GateViolation:
+    """A single failed rule.
+
+    Attributes:
+        rule: Name of the rule that failed.
+        reason: Human-readable explanation of the failure.
+        value: The input value that triggered the violation.
+    """
+
     rule: str
     reason: str
     value: Any = None
@@ -20,12 +30,27 @@ class GateViolation:
 
 @dataclass
 class GateResult:
+    """The outcome of running every rule in a gate against a value.
+
+    Truthiness mirrors :attr:`passed`, so a result can be used directly in a
+    boolean context::
+
+        if gate.run(message):
+            ...  # all rules passed
+
+    Attributes:
+        passed: ``True`` only if no rule was violated.
+        violations: Every :class:`GateViolation` collected during the run.
+        value: The input value that was checked.
+    """
+
     passed: bool
     violations: list[GateViolation] = field(default_factory=list)
     value: Any = None
 
     @property
     def ok(self) -> bool:
+        """Alias for :attr:`passed`."""
         return self.passed
 
     def __bool__(self) -> bool:
@@ -33,6 +58,12 @@ class GateResult:
 
 
 class InputGateError(Exception):
+    """Raised by :meth:`InputGate.check` when a rule is violated.
+
+    The offending :class:`GateViolation` is available on the ``violation``
+    attribute.
+    """
+
     def __init__(self, violation: GateViolation) -> None:
         self.violation = violation
         super().__init__(str(violation))
@@ -63,6 +94,7 @@ class InputGate:
         return self
 
     def add_max_length(self, max_len: int) -> "InputGate":
+        """Fail if ``len(str(value))`` is greater than ``max_len``."""
         def check(val: Any) -> Optional[str]:
             s = str(val) if not isinstance(val, str) else val
             if len(s) > max_len:
@@ -71,6 +103,7 @@ class InputGate:
         return self.add_rule("max_length", check)
 
     def add_min_length(self, min_len: int) -> "InputGate":
+        """Fail if ``len(str(value))`` is less than ``min_len``."""
         def check(val: Any) -> Optional[str]:
             s = str(val) if not isinstance(val, str) else val
             if len(s) < min_len:
@@ -79,6 +112,12 @@ class InputGate:
         return self.add_rule("min_length", check)
 
     def add_no_pattern(self, pattern: str, label: str = "", flags: int = re.IGNORECASE) -> "InputGate":
+        """Fail if the regular expression ``pattern`` is found in the value.
+
+        Matching is case-insensitive by default; pass ``flags=0`` for a
+        case-sensitive match. ``label`` is used in the violation message and
+        rule name when provided.
+        """
         compiled = re.compile(pattern, flags)
         rule_name = f"no_pattern:{label or pattern[:20]}"
         def check(val: Any) -> Optional[str]:
@@ -89,6 +128,11 @@ class InputGate:
         return self.add_rule(rule_name, check)
 
     def add_required_pattern(self, pattern: str, label: str = "", flags: int = re.IGNORECASE) -> "InputGate":
+        """Fail unless the regular expression ``pattern`` is found in the value.
+
+        Matching is case-insensitive by default; pass ``flags=0`` for a
+        case-sensitive match.
+        """
         compiled = re.compile(pattern, flags)
         rule_name = f"required_pattern:{label or pattern[:20]}"
         def check(val: Any) -> Optional[str]:
@@ -99,6 +143,7 @@ class InputGate:
         return self.add_rule(rule_name, check)
 
     def add_not_empty(self) -> "InputGate":
+        """Fail if the value is ``None`` or an empty ``str``/``list``/``dict``."""
         def check(val: Any) -> Optional[str]:
             if val is None or (isinstance(val, (str, list, dict)) and not val):
                 return "Input must not be empty"
@@ -106,6 +151,10 @@ class InputGate:
         return self.add_rule("not_empty", check)
 
     def add_no_keywords(self, keywords: list[str], case_sensitive: bool = False) -> "InputGate":
+        """Fail if any of ``keywords`` appears as a substring of the value.
+
+        Matching is case-insensitive unless ``case_sensitive`` is ``True``.
+        """
         def check(val: Any) -> Optional[str]:
             s = str(val) if not isinstance(val, str) else val
             haystack = s if case_sensitive else s.lower()
@@ -129,6 +178,7 @@ class InputGate:
         return self.add_rule("allowed_topics", check)
 
     def add_type_check(self, expected_type: type) -> "InputGate":
+        """Fail unless the value is an instance of ``expected_type``."""
         def check(val: Any) -> Optional[str]:
             if not isinstance(val, expected_type):
                 return f"Expected type {expected_type.__name__}, got {type(val).__name__}"
@@ -161,4 +211,10 @@ class InputGate:
         return decorator
 
 
-__all__ = ["InputGate", "InputGateError", "GateResult", "GateViolation"]
+__all__ = [
+    "InputGate",
+    "InputGateError",
+    "GateResult",
+    "GateViolation",
+    "__version__",
+]
