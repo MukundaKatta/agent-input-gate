@@ -1,4 +1,5 @@
 """Tests for agent-input-gate."""
+
 import pytest
 from agent_input_gate import InputGate, InputGateError, GateResult, GateViolation
 
@@ -146,3 +147,42 @@ def test_gate_violation_str():
     v = GateViolation(rule="test_rule", reason="too long")
     assert "test_rule" in str(v)
     assert "too long" in str(v)
+
+
+def test_add_rule_custom():
+    gate = InputGate().add_rule(
+        "no_caps", lambda v: "has caps" if v != v.lower() else None
+    )
+    gate.check("all lower")
+    with pytest.raises(InputGateError) as exc_info:
+        gate.check("HasCaps")
+    assert exc_info.value.violation.rule == "no_caps"
+
+
+def test_run_ok_property():
+    gate = InputGate().add_max_length(100)
+    result = gate.run("short")
+    assert result.ok is True
+    assert result.value == "short"
+
+
+def test_wrap_preserves_metadata():
+    gate = InputGate().add_max_length(100)
+
+    @gate.wrap()
+    def my_func(value):
+        """Docstring for my_func."""
+        return value
+
+    assert my_func.__name__ == "my_func"
+    assert my_func.__doc__ == "Docstring for my_func."
+
+
+def test_wrap_passes_extra_args():
+    gate = InputGate().add_max_length(100)
+
+    @gate.wrap()
+    def combine(value, suffix, sep="-"):
+        return f"{value}{sep}{suffix}"
+
+    assert combine("a", "b", sep="_") == "a_b"

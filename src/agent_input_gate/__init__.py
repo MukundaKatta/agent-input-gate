@@ -1,8 +1,10 @@
 """
 agent-input-gate: Gate agent inputs with composable rules.
 """
+
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
@@ -68,6 +70,7 @@ class InputGate:
             if len(s) > max_len:
                 return f"Input length {len(s)} exceeds max {max_len}"
             return None
+
         return self.add_rule("max_length", check)
 
     def add_min_length(self, min_len: int) -> "InputGate":
@@ -76,26 +79,35 @@ class InputGate:
             if len(s) < min_len:
                 return f"Input length {len(s)} below min {min_len}"
             return None
+
         return self.add_rule("min_length", check)
 
-    def add_no_pattern(self, pattern: str, label: str = "", flags: int = re.IGNORECASE) -> "InputGate":
+    def add_no_pattern(
+        self, pattern: str, label: str = "", flags: int = re.IGNORECASE
+    ) -> "InputGate":
         compiled = re.compile(pattern, flags)
         rule_name = f"no_pattern:{label or pattern[:20]}"
+
         def check(val: Any) -> Optional[str]:
             s = str(val) if not isinstance(val, str) else val
             if compiled.search(s):
                 return f"Forbidden pattern matched: {label or pattern}"
             return None
+
         return self.add_rule(rule_name, check)
 
-    def add_required_pattern(self, pattern: str, label: str = "", flags: int = re.IGNORECASE) -> "InputGate":
+    def add_required_pattern(
+        self, pattern: str, label: str = "", flags: int = re.IGNORECASE
+    ) -> "InputGate":
         compiled = re.compile(pattern, flags)
         rule_name = f"required_pattern:{label or pattern[:20]}"
+
         def check(val: Any) -> Optional[str]:
             s = str(val) if not isinstance(val, str) else val
             if not compiled.search(s):
                 return f"Required pattern not found: {label or pattern}"
             return None
+
         return self.add_rule(rule_name, check)
 
     def add_not_empty(self) -> "InputGate":
@@ -103,9 +115,12 @@ class InputGate:
             if val is None or (isinstance(val, (str, list, dict)) and not val):
                 return "Input must not be empty"
             return None
+
         return self.add_rule("not_empty", check)
 
-    def add_no_keywords(self, keywords: list[str], case_sensitive: bool = False) -> "InputGate":
+    def add_no_keywords(
+        self, keywords: list[str], case_sensitive: bool = False
+    ) -> "InputGate":
         def check(val: Any) -> Optional[str]:
             s = str(val) if not isinstance(val, str) else val
             haystack = s if case_sensitive else s.lower()
@@ -114,10 +129,14 @@ class InputGate:
                 if needle in haystack:
                     return f"Forbidden keyword: {kw}"
             return None
+
         return self.add_rule("no_keywords", check)
 
-    def add_allowed_topics(self, topics: list[str], case_sensitive: bool = False) -> "InputGate":
+    def add_allowed_topics(
+        self, topics: list[str], case_sensitive: bool = False
+    ) -> "InputGate":
         """Require that at least one of the allowed topics is mentioned."""
+
         def check(val: Any) -> Optional[str]:
             s = str(val) if not isinstance(val, str) else val
             haystack = s if case_sensitive else s.lower()
@@ -126,13 +145,17 @@ class InputGate:
                 if needle in haystack:
                     return None
             return f"Input does not mention any allowed topic: {topics}"
+
         return self.add_rule("allowed_topics", check)
 
     def add_type_check(self, expected_type: type) -> "InputGate":
         def check(val: Any) -> Optional[str]:
             if not isinstance(val, expected_type):
-                return f"Expected type {expected_type.__name__}, got {type(val).__name__}"
+                return (
+                    f"Expected type {expected_type.__name__}, got {type(val).__name__}"
+                )
             return None
+
         return self.add_rule(f"type:{expected_type.__name__}", check)
 
     def check(self, value: Any) -> None:
@@ -140,7 +163,9 @@ class InputGate:
         for name, fn in self._rules:
             error = fn(value)
             if error:
-                raise InputGateError(GateViolation(rule=name, reason=error, value=value))
+                raise InputGateError(
+                    GateViolation(rule=name, reason=error, value=value)
+                )
 
     def run(self, value: Any) -> GateResult:
         """Check all rules and return a GateResult with all violations."""
@@ -153,11 +178,15 @@ class InputGate:
 
     def wrap(self) -> Callable[..., Any]:
         """Decorator: gate the first positional argument on each call."""
+
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+            @functools.wraps(fn)
             def wrapper(value: Any, *args: Any, **kwargs: Any) -> Any:
                 self.check(value)
                 return fn(value, *args, **kwargs)
+
             return wrapper
+
         return decorator
 
 
